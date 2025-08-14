@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-Simple yt-dlp API service for bypassing YouTube restrictions
-Deploy this to Railway, Render, or any Python hosting platform
+Enhanced yt-dlp API service for bypassing YouTube restrictions
+Now returns WAV audio format for direct speech recognition
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -10,6 +10,7 @@ import yt_dlp
 import tempfile
 import os
 import logging
+import subprocess
 from datetime import datetime
 
 app = Flask(__name__)
@@ -18,7 +19,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simple API key authentication (optional)
+# Simple API key authentication
 API_KEY = os.environ.get('API_KEY', 'your-secret-key-123')
 
 def authenticate(req):
@@ -31,12 +32,13 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'yt-dlp API',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'features': ['audio_download', 'wav_conversion', 'speech_ready']
     })
 
 @app.route('/download', methods=['POST'])
 def download():
-    """Download audio from YouTube video"""
+    """Download and convert audio from YouTube video to WAV format"""
     try:
         # Optional authentication
         if API_KEY and API_KEY != 'your-secret-key-123':
@@ -49,8 +51,10 @@ def download():
 
         url = data['url']
         format_selector = data.get('format', 'bestaudio')
+        convert_to_wav = data.get('convert_wav', True)  # New option for WAV conversion
         
         logger.info(f"Processing download request for: {url}")
+        logger.info(f"Convert to WAV: {convert_to_wav}")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = os.path.join(temp_dir, '%(id)s.%(ext)s')
@@ -59,7 +63,8 @@ def download():
                 'format': format_selector,
                 'outtmpl': output_path,
                 'extractaudio': True,
-                'audioformat': 'webm',
+                'audioformat': 'wav' if convert_to_wav else 'webm',
+                'audioquality': '16000',  # 16kHz for speech recognition
                 'noplaylist': True,
                 'quiet': True,
                 'no_warnings': True,
@@ -71,6 +76,14 @@ def download():
                 },
             }
 
+            # Add post-processor for WAV conversion if requested
+            if convert_to_wav:
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'wav',
+                    'preferredquality': '16000',
+                }]
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Extract info first
                 info = ydl.extract_info(url, download=False)
@@ -80,7 +93,7 @@ def download():
                 
                 logger.info(f"Video info: {title} ({duration}s)")
                 
-                # Download the audio
+                # Download and convert the audio
                 ydl.download([url])
                 
                 # Find the downloaded file
@@ -88,16 +101,26 @@ def download():
                 if not files:
                     return jsonify({'error': 'Download failed - no files created'}), 500
                 
-                downloaded_file = os.path.join(temp_dir, files[0])
+                # Look for WAV file first, then fall back to other formats
+                wav_files = [f for f in files if f.endswith('.wav')]
+                if wav_files:
+                    downloaded_file = os.path.join(temp_dir, wav_files[0])
+                    mimetype = 'audio/wav'
+                    extension = 'wav'
+                else:
+                    downloaded_file = os.path.join(temp_dir, files[0])
+                    mimetype = 'audio/webm'
+                    extension = 'webm'
+                
                 file_size = os.path.getsize(downloaded_file)
                 
-                logger.info(f"Download successful: {file_size} bytes")
+                logger.info(f"Download successful: {file_size} bytes, format: {extension}")
                 
                 return send_file(
                     downloaded_file,
                     as_attachment=True,
-                    download_name=f"{video_id}.webm",
-                    mimetype='audio/webm'
+                    download_name=f"{video_id}.{extension}",
+                    mimetype=mimetype
                 )
 
     except yt_dlp.utils.DownloadError as e:
