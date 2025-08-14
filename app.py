@@ -81,8 +81,20 @@ def download():
                 ydl_opts['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'wav',
-                    'preferredquality': '16000',
+                    'preferredquality': '192',  # 192kbps bitrate for good quality
+                }, {
+                    'key': 'FFmpegVideoConvertor',
+                    'preferedformat': 'wav',
                 }]
+                # Add FFmpeg options for proper speech recognition format
+                ydl_opts['postprocessor_args'] = {
+                    'ffmpeg': [
+                        '-ar', '16000',      # 16kHz sample rate
+                        '-ac', '1',          # Mono channel
+                        '-acodec', 'pcm_s16le',  # 16-bit PCM encoding
+                        '-f', 'wav'          # WAV format
+                    ]
+                }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Extract info first
